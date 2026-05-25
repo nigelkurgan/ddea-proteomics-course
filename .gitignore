@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+.DS_Store
+*.egg-info/
+dist/
+build/
+.env
+results/
+*.log
+
+# Keep demo data in repo (small, <5 MB) but exclude any real data
+data/raw/
+data/processed/
+!data/demo/
