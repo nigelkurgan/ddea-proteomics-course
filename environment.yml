@@ -1,0 +1,17 @@
+name: proteomics_qc
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pandas>=2.0
+  - numpy>=1.24
+  - matplotlib>=3.7
+  - scipy>=1.10
+  - scikit-learn>=1.3
+  - pyarrow>=12.0
+  - jupyter
+  - ipykernel
+  - pip
+  - pip:
+    - inmoose>=0.3
