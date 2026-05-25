@@ -6,7 +6,7 @@ A portable, well-documented quality-control pipeline for DIA (data-independent a
 
 Click the badge to open the tutorial notebook directly in Google Colab:
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/nigelkurgan/dea-proteomics-course/blob/main/notebooks/proteomics_qc_tutorial.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/nigelkurgan/ddea-proteomics-course/blob/main/notebooks/proteomics_qc_tutorial.ipynb)
 
 No installation required — all dependencies are installed in the first cell.
 
@@ -30,8 +30,8 @@ No installation required — all dependencies are installed in the first cell.
 ## Installation (local)
 
 ```bash
-git clone https://github.com/nigelkurgan/dea-proteomics-course.git
-cd dea-proteomics-course
+git clone https://github.com/nigelkurgan/ddea-proteomics-course.git
+cd ddea-proteomics-course
 
 # Option A: conda
 conda env create -f environment.yml
@@ -102,7 +102,7 @@ run_pipeline(cfg)
 ## Repository structure
 
 ```
-dea-proteomics-course/
+ddea-proteomics-course/
 ├── proteomics_qc/              # Python package
 │   ├── config.py               # Configurable parameters
 │   ├── run_qc.py               # Main pipeline entry point
