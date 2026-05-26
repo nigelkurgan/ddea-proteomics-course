@@ -107,13 +107,22 @@ packages = [
 subprocess.check_call([sys.executable, "-m", "pip", "install", "-q"] + packages)
 print("✓ Dependencies installed")
 
-import os
+import os, urllib.request
 if not os.path.exists("ddea-proteomics-course"):
     subprocess.check_call(["git", "clone", "-q",
         "https://github.com/nigelkurgan/ddea-proteomics-course.git"])
 os.chdir("ddea-proteomics-course")
 sys.path.insert(0, ".")
-print("✓ Repository ready")\
+print("✓ Repository ready")
+
+ppa_path = "data/ppa_sumstats_incident.csv"
+if not os.path.exists(ppa_path):
+    print("Downloading Proteome-Phenome Atlas summary statistics (~113 MB)...")
+    url = "https://github.com/nigelkurgan/ddea-proteomics-course/releases/download/v1.0/ppa_sumstats_incident.csv"
+    urllib.request.urlretrieve(url, ppa_path)
+    print("✓ PPA data downloaded")
+else:
+    print("✓ PPA data already present")\
 """))
 
 # ── 2. Imports ────────────────────────────────────────────────────────────────

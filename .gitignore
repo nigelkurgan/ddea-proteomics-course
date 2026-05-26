@@ -14,3 +14,7 @@ results/
 data/raw/
 data/processed/
 !data/demo/
+
+# PPA summary statistics (113 MB — exceeds GitHub 100 MB limit)
+# Download from https://proteome-phenome-atlas.com/ and place in data/
+data/ppa_sumstats_incident.csv
