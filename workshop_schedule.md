@@ -20,7 +20,7 @@
 2. **Roger** — Large-scale single fibre and data visualization: uMAP, PCA, clustering, plotly (90 min)
 3. **Nigel** — Tissue and disease enrichment case study and genetics integration (90 min)
 4. **Mixed session** (90 min)
-   - Nigel — MOFA findings (15 min)
+   - Farina — MOFA findings (15 min)
    - Nigel — Cross-omic networks (15 min)
    - Roger — IP and transcriptomics integration (60 min)
 
