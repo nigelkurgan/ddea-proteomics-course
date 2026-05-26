@@ -36,14 +36,15 @@ cells.append(md("""\
 By the end of this notebook you will be able to:
 
 1. Load and inspect a DIA proteomics intensity matrix from a longitudinal study
-2. Apply protein completeness filtering and explain the trade-offs
-3. Normalise intensities using median scaling and understand why it works
-4. Detect and confirm technical outlier samples using multiple independent methods
-5. Diagnose and correct plate batch effects — and see the improvement in PCA
-6. Assess technical reproducibility using pooled QC controls (intra- vs inter-plate CV)
-7. Distinguish within-subject from between-subject biological variation
-8. Interpret PCA, t-SNE, and factor-association heatmaps
-9. Generate a standardised QC report ready for publication
+2. Identify blood-contaminated samples using a marker panel and understand why they must be removed
+3. Apply protein completeness filtering and explain the trade-offs
+4. Normalise intensities using median scaling and understand why it works
+5. Detect and confirm technical outlier samples using multiple independent methods
+6. Diagnose and correct plate batch effects — and see the improvement in PCA
+7. Assess technical reproducibility using pooled QC controls (intra- vs inter-plate CV)
+8. Distinguish within-subject from between-subject biological variation
+9. Interpret PCA, t-SNE, and factor-association heatmaps
+10. Generate a standardised QC report ready for publication
 
 ---
 
@@ -119,6 +120,10 @@ from proteomics_qc.proteomics.outliers import (
     density_outliers, ks_confirm_outliers, build_outlier_table,
 )
 from proteomics_qc.proteomics.batch import plate_distance_stats, pc_factor_associations
+from proteomics_qc.proteomics.blood_contamination import (
+    load_contamination_panel, compute_contamination_scores,
+    flag_contaminated_samples, plot_contamination_panel,
+)
 from proteomics_qc.plots.style import apply_style, PALETTE
 from proteomics_qc.plots.distribution import (
     plot_sample_boxplot, plot_density_per_sample, plot_protein_rank_abundance,
@@ -233,10 +238,116 @@ print("QC pooled controls:")
 print(qc_meta[["plate", "group"]])\
 """))
 
-# ── 8. Stage 2 markdown ───────────────────────────────────────────────────────
+# ── 8. Stage 2: Blood Contamination Check — markdown ────────────────────────
 cells.append(md("""\
 ---
-## Stage 2: Missing Value Exploration
+## Stage 2: Blood Contamination Check
+
+### Why does plasma have contamination from blood cells?
+
+Plasma is prepared by centrifuging whole blood to remove cells. If the preparation is
+imperfect — slow centrifugation, haemolysis during freeze–thaw, or prolonged delay before
+processing — **cell-specific proteins enter the plasma fraction** and confound downstream analysis.
+
+We check for two types of contamination using known marker proteins from
+[Geyer et al. (2019)](https://pmc.ncbi.nlm.nih.gov/articles/PMC6835559/):
+
+| Marker type | Biological source | Key proteins | Normal in plasma? |
+|-------------|-------------------|--------------|--------------------|
+| **Erythrocyte** | Red blood cell lysis (haemolysis) | HBA1, HBB, CA1, HBD, PRDX2, CA2, CAT, BLVRB | No — absence expected |
+| **Platelet** | Insufficient platelet depletion | TLN1, MYH9, TPM4 | No — absence expected |
+| **Coagulation** | Plasma proteins (positive control) | FGA, FGB, FGG | Yes — always present |
+
+A spike in erythrocyte or platelet marker intensity indicates that **cell contents have leaked
+into the plasma sample**. Coagulation factors serve as an internal positive control —
+they confirm that the proteomics measurement itself is working.
+
+The threshold for flagging is data-driven: **mean + 3 × SD** of each marker's score
+distribution across all samples, computed separately per contamination type.
+
+> **Exercise 2.1**: Run the cell below and inspect the contamination plot.
+> How many samples are flagged? In which plates do they appear?
+
+> **Exercise 2.2**: Why would a sample with very high haemoglobin (HBA1, HBB) be problematic
+> for plasma proteomics? Consider:
+> - Haemoglobin is extremely abundant inside red blood cells. In a contaminated sample,
+>   it would dominate the measurable proteome.
+> - How would this affect quantification of genuine low-abundance plasma proteins?
+> - Would median normalisation fix this? Why or why not?
+
+> **Exercise 2.3**: Notice that coagulation factors (FGA, FGB, FGG) are present in all
+> samples at consistent levels. What is the role of the coagulation panel?
+> What would it tell you if the coagulation score were *also* elevated in some samples?\
+"""))
+
+# ── 9. Blood contamination detection code ────────────────────────────────────
+cells.append(code("""\
+# ── Load blood contamination panel and compute scores ────────────────────────
+# The panel lists marker proteins for erythrocyte, platelet, and coagulation
+# contamination with their UniProt accessions and a 'best marker' flag.
+PANEL_PATH = Path("data/blood_contamination_panel.xlsx")
+
+panel_df = load_contamination_panel(PANEL_PATH, quant_bio.columns.tolist())
+print()
+
+# Compute per-sample median log2 intensity for best markers of each type.
+# erythrocyte / platelet → normally absent from plasma; spikes = contamination
+# coagulation → always present in plasma; serves as internal positive control
+scores_df = compute_contamination_scores(quant_bio, panel_df)
+print("Contamination scores (log2 intensity — median of best markers):")
+print(scores_df.describe().round(2))
+print()
+
+# Flag samples where erythrocyte or platelet score exceeds mean + 3 SD.
+# The data-driven threshold adapts to the actual distribution in this dataset.
+N_SD_CONTAM = 3.0
+contam_flags, contam_thresholds = flag_contaminated_samples(scores_df, n_sd=N_SD_CONTAM)
+
+print(f"Contamination thresholds (mean + {N_SD_CONTAM} SD):")
+for ctype, thresh in contam_thresholds.items():
+    print(f"  {ctype:12s}: {thresh:.2f} log2")
+print()
+for ctype, samples in contam_flags.items():
+    print(f"Flagged ({ctype}): {len(samples)} sample(s)")
+    for s in samples:
+        print(f"  {s}  score = {scores_df.loc[s, ctype]:.2f} log2  "
+              f"(plate: {bio_meta.loc[s, 'plate']}, group: {bio_meta.loc[s, 'group']})")\
+"""))
+
+# ── 10. Contamination plot + removal ─────────────────────────────────────────
+cells.append(code("""\
+# ── Plot marker intensities across all biological samples ─────────────────────
+# Each row = one contamination type.  Samples are sorted by plate on the x-axis.
+# - Grey dots: secondary markers (not used for scoring)
+# - Coloured dots: best markers (used for the median score line)
+# - Solid line: per-sample median of best markers
+# - Dashed red lines: flagged samples (score > threshold)
+all_contaminated = sorted({s for lst in contam_flags.values() for s in lst})
+
+plot_contamination_panel(
+    quant_bio, bio_meta, panel_df,
+    title="Blood contamination markers — intensity across biological samples",
+    flagged_samples=all_contaminated,
+)
+
+# ── Remove contaminated samples ───────────────────────────────────────────────
+# Blood contamination must be removed BEFORE filtering, normalisation, and all
+# downstream analysis because:
+#   1. Haemoglobin / platelet proteins swamp the measurable plasma proteome
+#   2. They shift per-sample medians, distorting normalisation
+#   3. They project contaminated samples far from the cohort in PCA
+
+quant_bio = quant_bio.loc[[s for s in quant_bio.index if s not in all_contaminated]]
+bio_meta  = bio_meta.reindex(quant_bio.index)
+
+print(f"Removed {len(all_contaminated)} blood-contaminated sample(s): {all_contaminated}")
+print(f"Biological matrix after removal: {quant_bio.shape[0]} samples × {quant_bio.shape[1]} proteins")\
+"""))
+
+# ── 11. Stage 3 markdown ──────────────────────────────────────────────────────
+cells.append(md("""\
+---
+## Stage 3: Missing Value Exploration
 
 ### Why do proteomics data have missing values?
 
@@ -279,13 +390,13 @@ plot_missing_per_group(quant_bio, bio_meta["plate"])\
 # ── 12. Stage 3 markdown ──────────────────────────────────────────────────────
 cells.append(md("""\
 ---
-## Stage 3: Protein Completeness Filtering
+## Stage 4: Protein Completeness Filtering
 
 We remove proteins detected in fewer than `threshold` fraction of **biological** samples.
 The default is **20 %** — a widely-used cutoff that keeps most proteins while discarding
 highly-sparse, noisy measurements.
 
-> **Exercise 3.1**: Change `COMPLETENESS_THRESHOLD` to 0.10 and 0.50.
+> **Exercise 4.1**: Change `COMPLETENESS_THRESHOLD` to 0.10 and 0.50.
 > How many proteins remain at each threshold?
 > At 50 %, would you expect to lose mainly low-abundance or high-abundance proteins? Why?\
 """))
@@ -309,7 +420,7 @@ print(f"QC matrix aligned: {quant_qc_filt.shape[0]} samples × {quant_qc_filt.sh
 # ── 14. Stage 4 markdown ──────────────────────────────────────────────────────
 cells.append(md("""\
 ---
-## Stage 4: Normalisation
+## Stage 5: Normalisation
 
 ### Why normalise?
 
@@ -323,11 +434,11 @@ to biology.
 
 After normalisation, all sample boxplots should have aligned medians.
 
-> **Exercise 4.1**: Look at the boxplot *before* and *after*.
+> **Exercise 5.1**: Look at the boxplot *before* and *after*.
 > Which samples were shifted most? Can you identify the plate each shifted sample belongs to?
 
 > **Note**: Median scaling removes per-sample global offsets. It does NOT remove
-> protein-specific batch effects — those require batch correction (Stage 6).\
+> protein-specific batch effects — those require batch correction (Stage 7).\
 """))
 
 # ── 15. Before normalisation ──────────────────────────────────────────────────
@@ -439,7 +550,7 @@ print("plot_pc_pairs() helper defined")\
 # ── 19. Stage 5 markdown ──────────────────────────────────────────────────────
 cells.append(md("""\
 ---
-## Stage 5: Outlier Detection
+## Stage 6: Outlier Detection
 
 ### Strategy: multiple independent metrics + KS-test confirmation
 
@@ -456,7 +567,7 @@ We use **5 detection methods** in parallel:
 A **KS test** then confirms each candidate: the sample's intensity distribution must be
 significantly different from the rest of the cohort (p < 0.05).
 
-> **Exercise 5.1**: Run the detection cell and inspect the `outlier_table`.
+> **Exercise 6.1**: Run the detection cell and inspect the `outlier_table`.
 > Which method(s) flagged each outlier? Are any outliers caught by only *one* method?
 > What does this tell you about why we need multiple complementary approaches?\
 """))
@@ -522,7 +633,7 @@ plot_pc_pairs(quant_bio_imputed, bio_meta, color_by="plate",
 # ── 23. Stage 6 markdown ──────────────────────────────────────────────────────
 cells.append(md("""\
 ---
-## Stage 6: Batch-Effect QC
+## Stage 7: Batch-Effect QC
 
 ### What are batch effects?
 
@@ -542,7 +653,7 @@ a **complex multivariate pattern** that persists after normalisation.
 2. **Within vs. between plate distances** — within << between = strong batch effect
 3. **PC × factor heatmap** — how strongly does each factor (plate, group, sex, time) drive each PC?
 
-> **Exercise 6.1**: Look at the PC × factor heatmap before batch correction.
+> **Exercise 7.1**: Look at the PC × factor heatmap before batch correction.
 > Which factor drives PC1? Which factor drives PC5? Does this match your expectation?\
 """))
 
@@ -630,7 +741,7 @@ We compare two approaches:
 After correction, **plate should no longer dominate PC1/PC2** — and biological signals
 (group, sex, time) should become more visible.
 
-> **Exercise 6.2**: Compare the PCA plots before and after each correction method.
+> **Exercise 7.2**: Compare the PCA plots before and after each correction method.
 > Which method gives a cleaner result? Does the group/time structure become more visible?\
 """))
 
@@ -801,7 +912,7 @@ print("  technical reproducibility of the pooled QC confirmed.")\
 # ── 34. Stage 7 markdown ──────────────────────────────────────────────────────
 cells.append(md("""\
 ---
-## Stage 7: Coefficient of Variation (CV) Analysis
+## Stage 8: Coefficient of Variation (CV) Analysis
 
 ### What is CV and why does it matter?
 
@@ -819,10 +930,10 @@ We compute three complementary CV metrics:
 ### The key ratio:
 **Between-subject CV / Within-subject CV >> 1** → the assay can distinguish individuals.
 
-> **Exercise 7.1**: After correction, is QC inter-plate CV close to QC intra-plate CV?
+> **Exercise 8.1**: After correction, is QC inter-plate CV close to QC intra-plate CV?
 > What does convergence of these two metrics tell you about the batch correction?
 
-> **Exercise 7.2**: Is between-subject CV larger than within-subject CV?
+> **Exercise 8.2**: Is between-subject CV larger than within-subject CV?
 > If they were equal, what would that imply about the study's statistical power?\
 """))
 
@@ -936,7 +1047,7 @@ plot_correlation_heatmap(quant_qc_norm, qc_meta, color_by="plate")\
 # ── 38. Stage 8 markdown ──────────────────────────────────────────────────────
 cells.append(md("""\
 ---
-## Stage 8: Summary & Analysis-Ready Output
+## Stage 9: Summary & Analysis-Ready Output
 
 We now assemble the final clean matrix:
 1. Remove confirmed outlier samples
@@ -1006,36 +1117,42 @@ cells.append(md("""\
 ---
 ## Extended Exercises
 
-### Exercise A — Threshold sensitivity
+### Exercise A — Blood contamination threshold sensitivity
+Change `N_SD_CONTAM` to 2.0 and 4.0 and re-run Stage 2.
+How does the number of flagged samples change? What is the risk of being too lenient (2 SD)?
+If you set the threshold very high (4 SD), could you miss real contamination?
+
+### Exercise B — Completeness threshold sensitivity
 Change `COMPLETENESS_THRESHOLD` to 0.05, 0.50, and 1.0 and re-run the full pipeline.
 How many proteins remain at each threshold? At 100 % completeness, why do almost no proteins survive?
 
-### Exercise B — Outlier threshold sensitivity
+### Exercise C — Outlier threshold sensitivity
 Change `N_METHODS_THRESHOLD` to 1 and 4.
 How many samples are removed at each setting?
 What is the risk of being too lenient (threshold=1) vs. too strict (threshold=4)?
 
-### Exercise C — Batch correction comparison
+### Exercise D — Batch correction comparison
 Run the PC × factor heatmap on `quant_pm` (plate-median) and `quant_combat` (ComBat).
 For which method does the plate association drop below significance (−log10 p < 1.3)?
 Does group or timepoint association increase after correction?
 
-### Exercise D — QC star clustering in t-SNE
+### Exercise E — QC star clustering in t-SNE
 In the t-SNE plots, do the 12 QC stars cluster more tightly after correction?
 Which plate shows the greatest shift? Does this match the plate with the largest CV
 reduction (QC inter-plate before vs. after)?
 
-### Exercise E — Within-subject vs. between-subject CV
+### Exercise F — Within-subject vs. between-subject CV
 After ComBat correction, recompute bio within-subject CV using `quant_combat`.
 Does correction reduce the within-subject CV?
 Does the between/within ratio change after correction?
 
-### Exercise F — Your own data
+### Exercise G — Your own data
 Replace `demo_parquet` with a path to your own Spectronaut protein-level export.
 Ensure:
 1. The parquet has `PG_ProteinAccessions` as the first column
 2. Sample columns contain log2 intensities (Spectronaut default)
 3. A metadata CSV with `plate`, `is_qc`, and optionally `timepoint` and `subject_id` columns exists
+4. The `data/blood_contamination_panel.xlsx` file is present (protein accessions must match your species)
 
 ---
 *Pipeline source code: github.com/nigelkurgan/ddea-proteomics-course*\
