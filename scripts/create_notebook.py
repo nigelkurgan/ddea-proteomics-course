@@ -164,7 +164,7 @@ P00002        19.1         NaN   ...      20.3
 
 - Rows = proteins (UniProt accession)
 - Columns = samples (biological + QC controls)
-- Values = **log2 MS1 intensity** (LFQ or MaxLFQ)
+- Values = **log2 MS2 fragment ion intensity** (LFQ quantification from MS2 chromatograms in Spectronaut/DIA-NN)
 - **NaN** = protein not detected — this is NOT a zero; it is a missing observation
 
 We store the matrix in [Apache Parquet](https://parquet.apache.org/) format for fast, compact I/O.\
@@ -272,16 +272,35 @@ distribution across all samples, computed separately per contamination type.
 > **Exercise 2.1**: Run the cell below and inspect the contamination plot.
 > How many samples are flagged? In which plates do they appear?
 
-> **Exercise 2.2**: Why would a sample with very high haemoglobin (HBA1, HBB) be problematic
-> for plasma proteomics? Consider:
-> - Haemoglobin is extremely abundant inside red blood cells. In a contaminated sample,
->   it would dominate the measurable proteome.
-> - How would this affect quantification of genuine low-abundance plasma proteins?
-> - Would median normalisation fix this? Why or why not?
+<details>
+<summary><strong>💡 Exercise 2.1 — possible answer</strong></summary>
+Three samples are flagged: one erythrocyte-contaminated sample on Plate 2 and two platelet-contaminated samples on Plates 1 and 3. Each flagged sample has a contamination score of 25–27 log2, which is far above both the data-driven threshold (~20–22 log2) and the normal range (~15–18 log2) — a gap of 8–10 log2 units (~256–1024× in linear intensity).
+</details>
 
-> **Exercise 2.3**: Notice that coagulation factors (FGA, FGB, FGG) are present in all
-> samples at consistent levels. What is the role of the coagulation panel?
-> What would it tell you if the coagulation score were *also* elevated in some samples?\
+> **Exercise 2.2**: A sample from a haemolysed blood draw shows elevated HBA1 and HBB scores.
+> Why must this sample be removed before downstream protein quantification?
+
+<details>
+<summary><strong>💡 Exercise 2.2 — possible answer</strong></summary>
+Haemoglobin (HBA1 + HBB) is the most abundant protein in red blood cells and is normally absent from plasma. When erythrocytes lyse, haemoglobin floods the sample and can account for 10–50 % of the total measurable protein by mass. This causes three problems:
+
+1. **Dilution effect**: low-abundance plasma proteins (cytokines, hormones, signalling proteins) are displaced from the detectable range by the overwhelming haemoglobin signal.
+2. **Normalisation failure**: median scaling assumes that most proteins are unchanged across samples. In a haemolysed sample, the shifted median is driven partly by haemoglobin, so the correction over-adjusts genuine plasma proteins.
+3. **False differential expression**: proteins that co-elute with haemoglobin fragments may appear falsely elevated; proteins that compete for MS measurement time may appear falsely reduced.
+
+Removal is necessary because no computational correction can reliably recover the true abundance of plasma proteins in a heavily contaminated sample.
+</details>
+
+> **Exercise 2.3**: Notice that coagulation factors (FGA, FGB, FGG) are present at consistent
+> levels in all samples. What is the role of the coagulation panel?
+> What would it tell you if the coagulation score were *also* elevated in some samples?
+
+<details>
+<summary><strong>💡 Exercise 2.3 — possible answer</strong></summary>
+Coagulation factors (fibrinogen chains FGA, FGB, FGG) are genuine plasma proteins — they are always present because they circulate in blood to enable clotting. Their consistent detection across all samples serves as a **positive control**: it confirms that the proteomics workflow successfully identifies high-abundance plasma proteins. If coagulation scores were missing or low, it would suggest a failed sample preparation or data loading error.
+
+If the coagulation score were elevated in specific samples, it would NOT indicate contamination (since these proteins are expected). Instead, it might reflect true biological variation (e.g., acute phase response, pregnancy, or disease-related fibrinogen elevation) — this is exactly why coagulation factors are not used as contamination markers.
+</details>\
 """))
 
 # ── 9. Blood contamination detection code ────────────────────────────────────
@@ -407,16 +426,45 @@ $$\\text{MC frequency} = \\frac{\\sum (\\text{n\\_missed\\_cleavages} \\times 1)
 > **Exercise 3.1**: After running the cells below, which samples are flagged?
 > What is their MC rate compared to the cohort median?
 
+<details>
+<summary><strong>💡 Exercise 3.1 — possible answer</strong></summary>
+Two samples are flagged with MC rates of ~57 % and ~60 %, compared to a cohort median of ~21 %. The data-driven threshold (mean + 3 SD) sits around 29 %. The gap between normal and flagged samples is enormous — the contaminated samples have roughly 3× the expected MC rate — making them easy to identify even visually in the bar chart.
+</details>
+
 > **Exercise 3.2**: In the stacked bar chart, are the flagged samples isolated incidents,
-> or do they occur as neighbours in the same plate block?  What would plate-level clustering
-> of high-MC samples tell you about the cause of the digestion failure?
+> or do they occur as neighbours in the same plate block?
+> What would plate-level clustering of high-MC samples tell you about the cause of the digestion failure?
+
+<details>
+<summary><strong>💡 Exercise 3.2 — possible answer</strong></summary>
+In the demo data the two flagged samples appear on different plates (Plate 2 and Plate 4) and are not neighbours of each other — suggesting independent sample-level failures rather than a shared plate-level cause.
+
+If multiple high-MC samples clustered within the same plate, it would suggest a batch-level reagent failure: expired trypsin, wrong reduction/alkylation buffer, or a pipetting error on that plate's digestion step. In that scenario you might consider re-digesting the entire plate rather than excluding individual samples.
+</details>
 
 > **Exercise 3.3**: Inspect the bottom panel (MC rate by plate). Does any entire plate show
-> an elevated median MC rate?  How would you interpret this relative to an isolated single-sample spike?
+> an elevated median MC rate? How would you interpret that relative to an isolated single-sample spike?
+
+<details>
+<summary><strong>💡 Exercise 3.3 — possible answer</strong></summary>
+In this dataset, the per-plate medians should all be near ~21 % because only two individual samples are affected. A plate with a uniformly elevated median (e.g., 35–40 % across all ~120 samples on that plate) would indicate a systematic failure during preparation of that plate: the trypsin vial was ineffective, denaturation was incomplete, or a wash step was omitted.
+
+An isolated single-sample spike within an otherwise clean plate is more consistent with an individual handling error — pipetting failure, sample vial contamination, or prolonged incubation time for that one tube.
+</details>
 
 > **Exercise 3.4**: Why does an elevated MC rate affect protein quantification in LFQ?
-> Consider: if a protein generates only one tryptic peptide and that peptide is systematically
-> missed in some samples, how does this manifest in the protein intensity matrix?\
+
+<details>
+<summary><strong>💡 Exercise 3.4 — possible answer</strong></summary>
+Label-free quantification (LFQ) aggregates the intensities of all detected tryptic peptides for each protein. If a protein generates only one fully-tryptic peptide (e.g., a short protein between two K/R residues), and trypsin fails to cut that site in some samples, the fully-cleaved peptide is absent and replaced by a longer missed-cleaved form.
+
+The consequences are:
+1. The fully-cleaved peptide appears as NaN in affected samples → the protein is either missing or artificially down-regulated.
+2. The missed-cleaved form may be detected but at a different retention time and m/z, often with lower intensity due to reduced ionisation efficiency.
+3. In MaxLFQ/Spectronaut, if the missed-cleaved peptide is not in the transition library, it will not be quantified at all — causing complete protein dropout.
+
+This creates a systematic difference between well-digested and poorly-digested samples that mimics differential expression, introducing false positives in downstream statistical analysis.
+</details>\
 """))
 
 # ── 12. MC stats code ─────────────────────────────────────────────────────────
@@ -808,7 +856,14 @@ a **complex multivariate pattern** that persists after normalisation.
 3. **PC × factor heatmap** — how strongly does each factor (plate, group, sex, time) drive each PC?
 
 > **Exercise 8.1**: Look at the PC × factor heatmap before batch correction.
-> Which factor drives PC1? Which factor drives PC5? Does this match your expectation?\
+> Which factor drives PC1? Which factor drives PC5? Does this match your expectation?
+
+<details>
+<summary><strong>💡 Exercise 8.1 — possible answer</strong></summary>
+Before batch correction, <strong>plate</strong> dominates PC1, PC2, and PC3 (very high −log10 p-values). This is expected because the protein-specific plate effects are the largest source of variance in the dataset — larger than any biological signal.
+
+PC5 and beyond are more likely to show associations with <strong>group</strong>, <strong>timepoint</strong>, or <strong>sex</strong>, because plate effects have already been captured by the first few PCs. After batch correction, plate associations should drop sharply across all PCs, and biological factors should move into the earlier components.
+</details>\
 """))
 
 # ── 24. Build clean bio matrix ────────────────────────────────────────────────
@@ -896,7 +951,14 @@ After correction, **plate should no longer dominate PC1/PC2** — and biological
 (group, sex, time) should become more visible.
 
 > **Exercise 8.2**: Compare the PCA plots before and after each correction method.
-> Which method gives a cleaner result? Does the group/time structure become more visible?\
+> Which method gives a cleaner result? Does the group/time structure become more visible?
+
+<details>
+<summary><strong>💡 Exercise 8.2 — possible answer</strong></summary>
+ComBat typically gives a cleaner result because it models both additive and multiplicative batch effects per protein using an empirical Bayes framework, whereas plate-median correction only removes an additive shift.
+
+After ComBat, plate clusters in PC1/PC2 should collapse, and the variance previously captured by plate is redistributed. Biological signals (group, timepoint) may become more visible in the lower PCs — though their effect sizes in this dataset are modest by design. The PC × factor heatmap after correction should show plate associations near zero and group/timepoint associations increasing.
+</details>\
 """))
 
 # ── 30. Plate-median correction with before/after ─────────────────────────────
@@ -1063,7 +1125,116 @@ print("★ stars clustering tightly together after correction = batch effect rem
 print("  technical reproducibility of the pooled QC confirmed.")\
 """))
 
-# ── 34. Stage 7 markdown ──────────────────────────────────────────────────────
+# ── t-SNE coloured by participant — within-subject clustering ─────────────────
+cells.append(md("""\
+### t-SNE coloured by participant — within-subject protein fingerprint
+
+PCA is a **linear** method: it finds directions of maximum variance in a flat space.
+t-SNE is **non-linear**: it preserves local neighbourhood structure, pulling similar
+samples together even when the relationship is not captured by any single linear axis.
+
+Because each participant has a stable personal protein profile (their "fingerprint"), the
+three time points of the same subject should occupy a tight neighbourhood in t-SNE space —
+even though t-SNE was given no information about subject identity.
+
+The plot below shows **20 randomly selected subjects** (each a different colour), with
+lines connecting their T00 → T01 → T02 measurements. The remaining subjects are in grey.
+
+> **Exercise 8.3**: Do the three time points of the same subject cluster together?
+> If they do, what does this tell you about the stability of the plasma proteome over time?
+
+<details>
+<summary><strong>💡 Exercise 8.3 — possible answer</strong></summary>
+Yes — the time points of each subject form tight clusters that are clearly separated from
+other subjects' clusters. This reflects the personal protein fingerprint: ~80 % of the
+variation in an individual's plasma proteome is stable across time points (driven by
+genetics, body composition, and chronic physiology), while only ~20 % reflects acute
+fluctuations or longitudinal change.
+
+The fact that t-SNE — a method that receives no subject labels — reproduces this clustering
+demonstrates that the biological signal is strong enough to dominate the technical noise,
+especially after batch correction. This validates the study design and the QC pipeline:
+the cleaned data retains the biological structure it was designed to measure.
+</details>\
+"""))
+
+cells.append(code("""\
+# ── t-SNE: within-subject clustering (personal protein fingerprint) ───────────
+# coords_after was computed above (batch-corrected biological + QC samples).
+# We filter to biological samples and colour by subject_id.
+
+bio_coords = coords_after.reindex(bio_meta_clean.index).dropna()
+
+# Randomly pick 20 subjects to highlight; all others are plotted in light grey
+rng_vis  = np.random.default_rng(99)
+all_subjs = bio_meta_clean["subject_id"].dropna().unique()
+highlight = set(rng_vis.choice(all_subjs, size=min(20, len(all_subjs)), replace=False))
+
+# Build colour map for highlighted subjects (tab20 gives 20 distinct colours)
+h_list  = sorted(highlight)
+h_cmap  = plt.cm.tab20
+h_color = {sid: h_cmap(i / max(len(h_list) - 1, 1)) for i, sid in enumerate(h_list)}
+
+marker_map = {"T00": "o", "T01": "^", "T02": "s"}
+
+fig, ax = plt.subplots(figsize=(10, 8))
+
+# Grey background: all non-highlighted subjects
+for sid in all_subjs:
+    if sid in highlight:
+        continue
+    idx = bio_meta_clean.index[bio_meta_clean["subject_id"] == sid]
+    sub = bio_coords.reindex(idx).dropna()
+    if not sub.empty:
+        ax.scatter(sub["tSNE1"], sub["tSNE2"],
+                   color="lightgrey", s=5, alpha=0.4, zorder=1, linewidths=0)
+
+# Highlighted subjects: draw connecting lines then per-timepoint dots
+for sid in h_list:
+    idx = bio_meta_clean.index[bio_meta_clean["subject_id"] == sid]
+    sub = bio_coords.reindex(idx).dropna()
+    if sub.empty:
+        continue
+    # Sort by time point for ordered line drawing
+    tp_sorted = bio_meta_clean.loc[sub.index, "timepoint"].sort_values().index
+    sub_ord   = sub.reindex(tp_sorted)
+    color     = h_color[sid]
+
+    # Thin connecting line (T00 → T01 → T02)
+    ax.plot(sub_ord["tSNE1"], sub_ord["tSNE2"],
+            color=color, lw=1.2, alpha=0.65, zorder=2)
+
+    # Dots coloured by subject, shaped by time point
+    for tp, mk in marker_map.items():
+        tp_idx = [s for s in sub.index if bio_meta_clean.loc[s, "timepoint"] == tp]
+        if tp_idx:
+            ax.scatter(sub.loc[tp_idx, "tSNE1"], sub.loc[tp_idx, "tSNE2"],
+                       color=color, marker=mk, s=45, alpha=0.9,
+                       edgecolors="white", linewidths=0.5, zorder=3)
+
+# Legend: time-point shapes only (subject colours are arbitrary)
+for tp, mk in marker_map.items():
+    ax.scatter([], [], marker=mk, color="grey", s=40, label=tp)
+ax.scatter([], [], color="lightgrey", s=5, label="Other subjects")
+ax.legend(title="Time point", fontsize=9, loc="upper right", framealpha=0.8)
+
+ax.set_xlabel("t-SNE 1", fontsize=11)
+ax.set_ylabel("t-SNE 2", fontsize=11)
+ax.set_title(
+    "t-SNE after ComBat — coloured by subject (20 highlighted)\\n"
+    "Lines connect T00 → T01 → T02 of the same participant",
+    fontsize=11,
+)
+ax.spines["top"].set_visible(False)
+ax.spines["right"].set_visible(False)
+plt.tight_layout()
+plt.show()
+
+print("Each subject's 3 time points cluster together — the personal plasma protein fingerprint")
+print("is captured by t-SNE without any subject label being provided to the algorithm.")\
+"""))
+
+# ── 34. Stage 9 markdown ──────────────────────────────────────────────────────
 cells.append(md("""\
 ---
 ## Stage 9: Coefficient of Variation (CV) Analysis
@@ -1087,8 +1258,22 @@ We compute three complementary CV metrics:
 > **Exercise 9.1**: After correction, is QC inter-plate CV close to QC intra-plate CV?
 > What does convergence of these two metrics tell you about the batch correction?
 
+<details>
+<summary><strong>💡 Exercise 9.1 — possible answer</strong></summary>
+Yes — after plate-median or ComBat correction, QC inter-plate CV should approach QC intra-plate CV. Intra-plate CV (~3–5 %) reflects pure instrument noise; inter-plate CV before correction includes both instrument noise and the plate batch effect. When they converge after correction, it means the batch correction has removed the systematic between-plate differences, leaving only the irreducible technical noise.
+
+If QC inter-plate CV after correction remains substantially higher than intra-plate CV, the batch correction was incomplete — possibly because the batch effects are non-linear or because too many proteins had sparse coverage across plates.
+</details>
+
 > **Exercise 9.2**: Is between-subject CV larger than within-subject CV?
-> If they were equal, what would that imply about the study's statistical power?\
+> If they were equal, what would that imply about the study's statistical power?
+
+<details>
+<summary><strong>💡 Exercise 9.2 — possible answer</strong></summary>
+Yes — between-subject CV should be substantially larger than within-subject CV (ratio > 1.5×). Between-subject CV captures the true inter-individual biological variation in protein abundance; within-subject CV captures the combination of instrument noise and genuine longitudinal change within a person.
+
+If the two CVs were equal, it would mean the assay cannot distinguish individuals from one another — essentially all measured variation is noise. In that scenario, the study would have near-zero statistical power to detect group differences or biomarkers, because you cannot separate signal (individual protein biology) from noise (measurement error).
+</details>\
 """))
 
 # ── 35. QC CV analysis ────────────────────────────────────────────────────────
@@ -1228,7 +1413,27 @@ print(f"  {remove_samples}")
 
 # Drop outliers from the normalised biological matrix (real values, not imputed)
 quant_bio_clean = quant_bio_norm.drop(index=remove_samples, errors="ignore")
-print(f"\\nFinal matrix (normalised, outliers removed): {quant_bio_clean.shape}")\
+print(f"\\nFinal matrix (normalised, outliers removed): {quant_bio_clean.shape}")
+
+# ── Full QC removal summary ────────────────────────────────────────────────────
+# Collect ALL samples removed across all QC stages so the methods section
+# reports the complete pipeline, not just the outlier detection step.
+n_input       = sample_meta[~sample_meta["is_qc"]].shape[0]
+n_contam      = len(all_contaminated)    # Stage 2: blood contamination
+n_poor_digest = len(mc_flagged)          # Stage 3: missed cleavage
+n_outliers    = len(remove_samples)      # Stage 7: multi-method outlier detection
+n_total_removed = n_contam + n_poor_digest + n_outliers
+n_final         = quant_bio_clean.shape[0]
+
+print()
+print("=== Sample Removal Summary (all QC stages) ===")
+print(f"  Input biological samples:                    {n_input}")
+print(f"  Stage 2 — Blood contamination removed:       {n_contam}  {all_contaminated}")
+print(f"  Stage 3 — Poor digestion (MC rate) removed:  {n_poor_digest}  {mc_flagged}")
+print(f"  Stage 7 — Technical outliers removed:        {n_outliers}  {remove_samples}")
+print(f"  ─────────────────────────────────────────────────────")
+print(f"  Total removed:                               {n_total_removed}")
+print(f"  Final analysis-ready samples:                {n_final}")\
 """))
 
 # ── 40. Save output ───────────────────────────────────────────────────────────
@@ -1245,25 +1450,34 @@ print("Saved: results/qc/proteomics_analysis_ready.parquet")
 
 # Record all QC decisions for reproducibility and methods reporting
 qc_decisions = {
-    "normalization":                  "median_scaling",
-    "completeness_threshold":         COMPLETENESS_THRESHOLD,
-    "outlier_zscore_threshold":       ZSCORE_THRESHOLD,
-    "outlier_n_methods_threshold":    N_METHODS_THRESHOLD,
-    "n_outliers_removed":             len(remove_samples),
-    "outliers_removed":               remove_samples,
-    "n_samples_final":                int(quant_bio_clean.shape[0]),
-    "n_proteins_final":               int(quant_bio_clean.shape[1]),
+    "normalization":                      "median_scaling",
+    "completeness_threshold":             COMPLETENESS_THRESHOLD,
+    "outlier_zscore_threshold":           ZSCORE_THRESHOLD,
+    "outlier_n_methods_threshold":        N_METHODS_THRESHOLD,
+    "blood_contamination_n_sd":           N_SD_CONTAM,
+    "blood_contamination_removed":        all_contaminated,
+    "n_blood_contamination_removed":      len(all_contaminated),
+    "missed_cleavage_n_sd":               N_SD_MC,
+    "missed_cleavage_removed":            mc_flagged,
+    "n_missed_cleavage_removed":          len(mc_flagged),
+    "technical_outliers_removed":         remove_samples,
+    "n_technical_outliers_removed":       len(remove_samples),
+    "n_total_removed":                    n_total_removed,
+    "n_samples_final":                    int(quant_bio_clean.shape[0]),
+    "n_proteins_final":                   int(quant_bio_clean.shape[1]),
 }
 with open("results/qc/tables/qc_decisions.json", "w") as f:
     json.dump(qc_decisions, f, indent=2)
 print("Saved: results/qc/tables/qc_decisions.json")
 
 print()
-print("=== QC Summary ===")
-print(f"  Input (bio):         {quant_bio.shape[0]} samples × {quant_bio.shape[1]} proteins")
-print(f"  After filtering:     {quant_bio_filt.shape[1]} proteins (threshold={COMPLETENESS_THRESHOLD:.0%})")
-print(f"  Outliers removed:    {len(remove_samples)} samples")
-print(f"  Final matrix:        {quant_bio_clean.shape[0]} samples × {quant_bio_clean.shape[1]} proteins")\
+print("=== Final QC Report ===")
+print(f"  Input (bio):                    {n_input} samples × {quant_bio.shape[1]} proteins")
+print(f"  After protein filtering:        {quant_bio_filt.shape[1]} proteins (threshold={COMPLETENESS_THRESHOLD:.0%})")
+print(f"  Blood contamination removed:    {n_contam} sample(s)")
+print(f"  Poor digestion removed:         {n_poor_digest} sample(s)")
+print(f"  Technical outliers removed:     {n_outliers} sample(s)")
+print(f"  Analysis-ready matrix:          {quant_bio_clean.shape[0]} samples × {quant_bio_clean.shape[1]} proteins")\
 """))
 
 # ── 41. Exercises ─────────────────────────────────────────────────────────────
