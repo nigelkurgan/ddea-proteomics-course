@@ -49,11 +49,10 @@ The notebook uses data from a multi-workflow plasma proteomics study of insulin 
 protein groups: consistent pre- and post-clamp associations, baseline-only, and
 clamp-stimulated-only.
 
-> **Data note:** The Proteome-Phenome Atlas summary statistics (`ppa_sumstats_incident.csv`)
-> must be downloaded separately from [proteome-phenome-atlas.com](https://proteome-phenome-atlas.com/)
-> and placed in the `data/` folder before running the enrichment notebook.
-> *Citation: Deng YT et al. (2025) Atlas of the plasma proteome in health and disease in
-> 53,026 adults. Cell 188(1):253–271. https://doi.org/10.1016/j.cell.2024.10.045*
+All data, including the Proteome-Phenome Atlas summary statistics, are downloaded
+automatically when running in Colab. *Citation: Deng YT et al. (2025) Atlas of the plasma
+proteome in health and disease in 53,026 adults. Cell 188(1):253–271.
+https://doi.org/10.1016/j.cell.2024.10.045*
 
 ---
 
