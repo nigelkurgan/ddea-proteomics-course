@@ -335,7 +335,23 @@ def generate_demo(
     qc_meta_df  = pd.DataFrame(qc_records).set_index("sample_id")
     meta_df     = pd.concat([bio_meta_df, qc_meta_df])
 
-    # ── Save ───────────────────────────────────────────────────────────────────
+    # ── Peptide-level matrix with missed cleavage data ────────────────────────
+    # This is a separate dataset used only for missed cleavage QC (Stage 3).
+    # Each row is a unique peptide; columns are sample intensities.
+    # Metadata columns mirror the Spectronaut export format.
+    peptide_df, pd_bio_idx, pd_poor_idx = _generate_peptide_data(
+        rng=rng,
+        bio_ids=bio_ids,
+        bio_plate_num=bio_plate_num,
+        qc_ids=qc_ids,
+        qc_plate_num=qc_plate_num,
+        n_plates=n_plates,
+        plate_effects=plate_effects,
+        reserved=reserved,
+        output_dir=output_dir,
+    )
+
+    # ── Save protein matrix and metadata ──────────────────────────────────────
     parquet_path = output_dir / "demo_proteomics.parquet"
     meta_path    = output_dir / "demo_metadata.csv"
     prot_df.to_parquet(parquet_path, index=False)
@@ -354,10 +370,148 @@ def generate_demo(
     print(f"  QC missing:            {np.isnan(full_qc_mat).mean():.1%}")
     print(f"  Blood-contaminated:    3 samples planted (2 platelet, 1 erythrocyte) — not revealed")
     print(f"  Technical outliers:    4 samples planted — not revealed")
+    print(f"  Poor digestion:        2 samples planted (MC rate ~45–50 %) — not revealed")
     print(f"  Saved: {parquet_path}")
     print(f"  Saved: {meta_path}")
 
     return prot_df, meta_df
+
+
+def _generate_peptide_data(
+    rng:            np.random.Generator,
+    bio_ids:        list[str],
+    bio_plate_num:  list[int],
+    qc_ids:         list[str],
+    qc_plate_num:   list[int],
+    n_plates:       int,
+    plate_effects:  dict[int, np.ndarray],
+    reserved:       set[int],
+    output_dir:     Path,
+    n_peptides:     int = 3000,
+) -> tuple[pd.DataFrame, list[int], list[int]]:
+    """
+    Generate a synthetic peptide-level dataset for missed cleavage QC.
+
+    The MC distribution is drawn from real GDM plasma data:
+      MC=0: ~79 %,  MC=1: ~20 %,  MC=2: ~1 %
+
+    Two biological samples are chosen as 'poor digestion' samples.  Their MC
+    distributions are shifted towards higher missed cleavage counts, simulating
+    insufficient trypsin activity or incomplete sample denaturation.
+
+    Returns
+    -------
+    peptide_df   : peptide × samples DataFrame (Spectronaut-like format)
+    bio_pd_idxs  : indices (in bio_ids) of poor-digestion samples planted
+    poor_idxs    : same, for reporting
+    """
+    n_bio = len(bio_ids)
+    n_qc  = len(qc_ids)
+
+    # ── Peptide properties ────────────────────────────────────────────────────
+    # Assign MC count to each peptide based on real GDM proportions
+    mc_probs = [0.79, 0.20, 0.01]
+    mc_counts = rng.choice([0, 1, 2], size=n_peptides, p=mc_probs)
+
+    # Per-peptide baseline detection probability (proxy for abundance)
+    # Low-abundance peptides (low detect_p) are more likely to be missed
+    detect_p = rng.beta(2, 2, size=n_peptides)  # broad beta distribution
+    detect_p = np.clip(detect_p, 0.05, 0.92)
+
+    # Per-peptide mean intensity
+    pep_means = rng.uniform(12, 28, size=n_peptides)
+
+    # ── Assign poor-digestion samples (two bio samples, different plates) ────
+    # Avoid positions already used for blood contamination / technical outliers
+    def pick_pd_sample(plate_num: int, already_used: set[int]) -> int:
+        candidates = [i for i, pn in enumerate(bio_plate_num)
+                      if pn == plate_num and i not in already_used]
+        return int(candidates[rng.integers(4, len(candidates) - 4)])
+
+    pd_reserved = set(reserved)
+    pd_idx1 = pick_pd_sample(2, pd_reserved); pd_reserved.add(pd_idx1)
+    pd_idx2 = pick_pd_sample(4, pd_reserved); pd_reserved.add(pd_idx2)
+    poor_set = {pd_idx1, pd_idx2}
+
+    # ── Biological sample intensities ─────────────────────────────────────────
+    bio_mat = np.full((n_peptides, n_bio), np.nan)
+    for j in range(n_bio):
+        if j in poor_set:
+            # Poor digestion: boost high-MC detection, suppress MC=0 detection
+            p_adj = np.where(mc_counts >= 1, detect_p * 2.5, detect_p * 0.35)
+            p_adj = np.clip(p_adj, 0.03, 0.95)
+        else:
+            p_adj = detect_p
+        detected = rng.random(n_peptides) < p_adj
+        bio_mat[detected, j] = pep_means[detected] + rng.normal(0, 1.2, detected.sum())
+
+    # ── QC sample intensities (same pooled reference, low noise) ─────────────
+    qc_mat = np.full((n_peptides, n_qc), np.nan)
+    for j in range(n_qc):
+        detected = rng.random(n_peptides) < detect_p
+        qc_mat[detected, j] = pep_means[detected] + rng.normal(0, 0.15, detected.sum())
+
+    # ── Simplified peptide sequences (tryptic structure) ─────────────────────
+    # For teaching purposes we generate plausible sequences that reflect MC count:
+    #   MC=0 → ends in K or R, no internal K/R
+    #   MC=1 → one internal K/R, ends in K or R
+    #   MC=2 → two internal K/R, ends in K or R
+    amino_acids = list("ACDEFGHILMNPQSTVWY")  # non-K/R amino acids
+    kr = ["K", "R"]
+
+    def _make_sequence(n_mc: int, rng: np.random.Generator) -> str:
+        def seg(length: int) -> str:
+            return "".join(rng.choice(amino_acids, size=length))
+        length = int(rng.integers(6, 14))
+        if n_mc == 0:
+            return seg(length) + rng.choice(kr)
+        elif n_mc == 1:
+            half = max(2, length // 2)
+            return seg(half) + rng.choice(kr) + seg(length - half) + rng.choice(kr)
+        else:
+            q = max(2, length // 3)
+            return (seg(q) + rng.choice(kr) + seg(q) + rng.choice(kr)
+                    + seg(length - 2 * q) + rng.choice(kr))
+
+    stripped = [_make_sequence(int(mc), rng) for mc in mc_counts]
+    modified = [f"_{s}_" for s in stripped]
+
+    # ── Assemble DataFrame ────────────────────────────────────────────────────
+    pep_df = pd.DataFrame(
+        np.concatenate([bio_mat, qc_mat], axis=1),
+        columns=bio_ids + qc_ids,
+    )
+    pep_df.insert(0, "EG_ModifiedSequence",     modified)
+    pep_df.insert(1, "PEP_StrippedSequence",    stripped)
+    pep_df.insert(2, "PEP_NrOfMissedCleavages", mc_counts.astype(str))
+    pep_df.insert(3, "PG_ProteinAccessions",    [f"PROT_{i % 500:04d}" for i in range(n_peptides)])
+    pep_df.insert(4, "PG_Genes",                [f"GENE{i % 500}" for i in range(n_peptides)])
+
+    pep_path = output_dir / "demo_peptide.parquet"
+    pep_df.to_parquet(pep_path, index=False)
+
+    # Compute and print per-sample MC stats for planted samples
+    bio_mc_rates = []
+    for j, sid in enumerate(bio_ids):
+        detected = ~np.isnan(bio_mat[:, j])
+        if detected.sum() == 0:
+            continue
+        rate = (mc_counts[detected] >= 1).mean()
+        bio_mc_rates.append(rate)
+
+    poor1_rate = (mc_counts[~np.isnan(bio_mat[:, pd_idx1])] >= 1).mean()
+    poor2_rate = (mc_counts[~np.isnan(bio_mat[:, pd_idx2])] >= 1).mean()
+    normal_median = float(np.median([r for j, r in enumerate(bio_mc_rates)
+                                     if j not in poor_set]))
+
+    print(f"  Peptides:              {n_peptides}")
+    print(f"  MC=0 fraction:         {(mc_counts==0).mean():.1%} of peptides")
+    print(f"  Normal MC rate:        {normal_median:.1%}  (median across samples)")
+    print(f"  Poor digestion sample 1 ({bio_ids[pd_idx1]}):  MC rate {poor1_rate:.1%}")
+    print(f"  Poor digestion sample 2 ({bio_ids[pd_idx2]}):  MC rate {poor2_rate:.1%}")
+    print(f"  Saved: {pep_path}")
+
+    return pep_df, [pd_idx1, pd_idx2], list(poor_set)
 
 
 if __name__ == "__main__":
