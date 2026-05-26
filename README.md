@@ -1,127 +1,127 @@
-# Proteomics QC Teaching Pipeline
+# Plasma Proteomics — QC and Enrichment Analysis Course
 
-A portable, well-documented quality-control pipeline for DIA (data-independent acquisition) proteomics data, designed as a teaching resource for proteomics courses.
+A hands-on teaching resource for plasma proteomics data analysis, covering quality control
+of DIA mass-spectrometry data through to biological interpretation via enrichment analysis.
 
-## Quick Start — Google Colab
+---
 
-Click the badge to open the tutorial notebook directly in Google Colab:
+## Notebooks
+
+### 1. Proteomics QC Pipeline
+
+Step-by-step quality control of a multi-plate DIA plasma proteomics experiment —
+from raw intensities to a batch-corrected, analysis-ready matrix.
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/nigelkurgan/ddea-proteomics-course/blob/main/notebooks/proteomics_qc_tutorial.ipynb)
 
-No installation required — all dependencies are installed in the first cell.
-
----
-
-## What does this pipeline do?
-
 | Stage | What | Why |
 |-------|------|-----|
-| 1. Load | Read (proteins × samples) parquet | Spectronaut / DIA-NN output format |
-| 2. Missing QC | Heatmap + per-group missing rates | Spot failed injections and structured missingness |
-| 3. Filtering | Remove proteins below detection threshold | Discard noisy low-abundance proteins |
-| 4. Normalisation | Median scaling (shift + MAV) | Remove loading and dynamic range variation |
-| 5. Outlier detection | Z-score, PCA, KDE + KS confirmation | Identify and exclude technical outlier samples |
-| 6. Batch QC | PCA, within/between distances, PC×factor | Diagnose and correct plate batch effects |
-| 7. CV analysis | Overall, intra-, inter-individual CV | Assess assay reproducibility |
-| 8. Output | Batch-corrected parquet + QC JSON | Analysis-ready data for downstream statistics |
+| Blood contamination | Erythrocyte & platelet marker scores | Remove samples with cell lysis |
+| Missed cleavages | Per-sample MC rate from peptide data | Flag poor trypsin digestion |
+| Missing values | Heatmap + group-level completeness | Spot failed injections |
+| Filtering | Protein completeness threshold | Discard noisy low-abundance proteins |
+| Normalisation | Median scaling (shift + MAV) | Remove per-sample loading variation |
+| Outlier detection | Z-score, PCA, KDE + KS confirmation | Identify technical outlier samples |
+| Batch QC | PCA, within/between distances, PC×factor | Diagnose plate batch effects |
+| Batch correction | Plate-median and ComBat | Remove systematic plate biases |
+| CV analysis | Intra-plate, inter-plate, within/between subject | Assess assay reproducibility |
+| Output | Batch-corrected parquet + QC report | Analysis-ready data |
 
 ---
 
-## Installation (local)
+### 2. Enrichment Analysis
+
+Biological interpretation of plasma proteomic associations with insulin sensitivity (M value)
+from a multi-workflow study. Covers Fisher's exact test enrichment using four curated
+annotation resources.
+
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/nigelkurgan/ddea-proteomics-course/blob/main/notebooks/proteomics_enrichment_tutorial.ipynb)
+
+| Resource | What it answers |
+|----------|----------------|
+| **GTEx** tissue atlas | Which organ expresses these proteins? (RNA-level) |
+| **HAtlas** blood proteome | Which tissue do these proteins originate from? (protein-level) |
+| **HPA** secretome | How do these proteins reach the plasma? |
+| **Proteome-Phenome Atlas** | Are these proteins known disease risk/protective factors? |
+
+The notebook uses data from a multi-workflow plasma proteomics study of insulin sensitivity
+(hyperinsulinemic-euglycemic clamp, n = 161) and demonstrates enrichment across three
+protein groups: consistent pre- and post-clamp associations, baseline-only, and
+clamp-stimulated-only.
+
+> **Data note:** The Proteome-Phenome Atlas summary statistics (`ppa_sumstats_incident.csv`)
+> must be downloaded separately from [proteome-phenome-atlas.com](https://proteome-phenome-atlas.com/)
+> and placed in the `data/` folder before running the enrichment notebook.
+> *Citation: Deng YT et al. (2025) Atlas of the plasma proteome in health and disease in
+> 53,026 adults. Cell 188(1):253–271. https://doi.org/10.1016/j.cell.2024.10.045*
+
+---
+
+## Quick Start — Local
 
 ```bash
 git clone https://github.com/nigelkurgan/ddea-proteomics-course.git
 cd ddea-proteomics-course
 
-# Option A: conda
+# conda
 conda env create -f environment.yml
 conda activate proteomics_qc
 
-# Option B: pip
+# or pip
 pip install -r requirements.txt
 ```
 
-## Generate demo data and run the pipeline
+Regenerate the notebooks from source:
 
 ```bash
-# Generate synthetic demo dataset (2000 proteins, 160 samples, 4 plates)
-python scripts/generate_demo_data.py
-
-# Run the full QC pipeline on the demo data
-python -m proteomics_qc.run_qc
-
-# Run on your own data
-python -m proteomics_qc.run_qc \
-    --protein-matrix /path/to/your/proteomics_protein.parquet \
-    --sample-metadata /path/to/metadata.csv \
-    --completeness 0.20 \
-    --batch-correction auto
+python scripts/generate_demo_data.py          # synthetic QC demo dataset
+python scripts/create_notebook.py             # QC tutorial notebook
+python scripts/create_enrichment_notebook.py  # enrichment tutorial notebook
 ```
 
-Results are written to `results/qc/`.
-
-## Run the tutorial notebook locally
+Run notebooks locally:
 
 ```bash
 jupyter notebook notebooks/proteomics_qc_tutorial.ipynb
+jupyter notebook notebooks/proteomics_enrichment_tutorial.ipynb
 ```
 
 ---
 
-## Input data format
-
-The pipeline expects a **proteins × samples parquet** file:
-
-- Columns starting with `PG_` are protein metadata (`PG_ProteinAccessions`, `PG_Genes`, etc.)
-- All other columns are sample intensities (log2 scale)
-- Missing values are `NaN` (not zero)
-
-This matches the default Spectronaut protein-level export format.
-
-An optional **sample metadata CSV** should have samples as the row index and at least a `plate` column.
-
----
-
-## Applying to a new project (fpm_soup example)
-
-```python
-from proteomics_qc.config import QCConfig
-from proteomics_qc.run_qc import run_pipeline
-
-cfg = QCConfig()
-cfg.protein_matrix = "/path/to/fpm_soup/neat.parquet"
-cfg.sample_metadata = "/path/to/fpm_soup/metadata.csv"
-cfg.output_dir = "/path/to/results/fpm_soup_qc"
-cfg.batch_correction_method = "auto"
-
-run_pipeline(cfg)
-```
-
----
-
-## Repository structure
+## Repository Structure
 
 ```
 ddea-proteomics-course/
-├── proteomics_qc/              # Python package
-│   ├── config.py               # Configurable parameters
-│   ├── run_qc.py               # Main pipeline entry point
+├── notebooks/
+│   ├── proteomics_qc_tutorial.ipynb          # QC pipeline (Colab-ready)
+│   └── proteomics_enrichment_tutorial.ipynb  # Enrichment analysis (Colab-ready)
+├── proteomics_qc/                            # Python package
 │   ├── proteomics/
 │   │   ├── filters.py          # Completeness filtering
-│   │   ├── normalise.py        # Median scaling, quantile norm, imputation
+│   │   ├── normalise.py        # Median scaling, imputation, batch correction
 │   │   ├── outliers.py         # Multi-method outlier detection + KS confirmation
-│   │   └── batch.py            # Plate distance stats, PC×factor associations
+│   │   ├── batch.py            # Plate distance stats, PC×factor associations
+│   │   ├── blood_contamination.py  # Erythrocyte / platelet marker scoring
+│   │   └── missed_cleavages.py     # Per-sample MC rate from peptide data
+│   ├── enrichment/
+│   │   ├── fisher.py           # Fisher's exact test enrichment (BH FDR)
+│   │   ├── resources.py        # Loaders for GTEx, HAtlas, HPA, Olink PPA
+│   │   └── plots.py            # Enrichment bar charts and dot plots
 │   └── plots/
 │       ├── distribution.py     # Boxplot, density, rank-abundance
 │       ├── missing.py          # Missing value heatmap, threshold plot
 │       ├── batch_effects.py    # PCA, correlation heatmap, distance violin
 │       └── cv.py               # CV violin, intra/inter comparison
-├── notebooks/
-│   └── proteomics_qc_tutorial.ipynb   # Colab-ready teaching notebook
 ├── scripts/
-│   └── generate_demo_data.py          # Synthetic data generator
+│   ├── generate_demo_data.py          # Synthetic QC demo data generator
+│   ├── create_notebook.py             # Builds proteomics_qc_tutorial.ipynb
+│   └── create_enrichment_notebook.py  # Builds proteomics_enrichment_tutorial.ipynb
 ├── data/
-│   └── demo/                          # Generated demo dataset
+│   ├── demo/                          # Generated demo dataset (parquet)
+│   ├── hpa_032026.tsv                 # Human Protein Atlas (March 2026)
+│   ├── gtex_tissue_enrichment.xlsx    # GTEx tissue enrichment labels
+│   ├── hatlas.xlsx                    # Human Cell Atlas blood proteome atlas
+│   └── ppa_sumstats_incident.csv      # Olink PPA incident disease associations
 ├── requirements.txt
 ├── environment.yml
 └── README.md
@@ -137,6 +137,8 @@ ddea-proteomics-course/
 | matplotlib, scipy | Plotting and statistics |
 | scikit-learn | PCA, KNN imputation |
 | pyarrow | Parquet file I/O |
+| statsmodels | BH FDR correction |
+| openpyxl | Excel file I/O |
 | inmoose | ComBat batch correction |
 
 ---
