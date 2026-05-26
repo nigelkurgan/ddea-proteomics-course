@@ -17,7 +17,18 @@ def load_gtex(path, background=None):
     }
 
 
-def load_hatlas(path, background=None, primary_only=True):
+# HAtlas primary labels that are blood/immune cell types, not anatomical tissues.
+# These are excluded from tissue-origin enrichment because they describe the cell
+# compartment that expressed the protein, not the organ it originates from.
+HATLAS_CELL_TYPE_LABELS = frozenset({
+    "macrophages", "erythrocytes", "bcell", "neutrophils",
+    "monocytes", "platelets", "tcellcd4", "tcellcd8",
+    "plasma prot", "common",
+})
+
+
+def load_hatlas(path, background=None, primary_only=True, min_gls=1,
+                tissue_only=True):
     """
     Load HAtlas blood/tissue proteome atlas resource.
 
@@ -25,20 +36,53 @@ def load_hatlas(path, background=None, primary_only=True):
     ----------
     primary_only : bool
         If True use only the primary tissue label (first term before '.' in global_label).
+    min_gls : float
+        Proteins with GLS <= min_gls are excluded. GLS reflects how many independent
+        atlas sources agree on the assignment; GLS > 1 means at least two concur.
+    tissue_only : bool
+        If True (default) exclude entries whose primary label is a blood/immune cell
+        type (e.g. bcell, monocytes) rather than an anatomical tissue.
 
     Returns dict {tissue: set_of_uniprot_ids}
     """
     df = pd.read_excel(path).dropna(subset=["uniprot_id", "global_label"])
-    df = df.copy()
+    df = df[df["Gobal label score (GLS)"] > min_gls].copy()
     df["tissue"] = (
         df["global_label"].str.split(".").str[0] if primary_only else df["global_label"]
     )
+    if tissue_only:
+        df = df[~df["tissue"].isin(HATLAS_CELL_TYPE_LABELS)]
     if background is not None:
         df = df[df["uniprot_id"].isin(background)]
     return {
         tissue: set(grp["uniprot_id"])
         for tissue, grp in df.groupby("tissue")
     }
+
+
+# Mapping from GTEx organ names to HAtlas primary tissue labels.
+# Used for cross-resource concordance comparisons.
+GTEX_TO_HATLAS = {
+    "Adipose":   "adiposetissue",
+    "Adrenal":   "adrenalgland",
+    "Artery":    "artery",
+    "Bladder":   "bladder",
+    "Brain":     "brain",
+    "Esophagus": "esophagus",
+    "Heart":     "heart",
+    "Intestine": "colon",
+    "Kidney":    "kidney",
+    "Liver":     "liver",
+    "Lung":      "lung",
+    "Muscle":    "muscle",
+    "Ovary":     "ovary",
+    "Pancreas":  "pancreas",
+    "Prostate":  "prostate",
+    "Skin":      "skin",
+    "Spleen":    "spleen",
+    "Stomach":   "stomach",
+    "Thyroid":   "thyroid",
+}
 
 
 def load_hpa_secretome(path, background=None):
