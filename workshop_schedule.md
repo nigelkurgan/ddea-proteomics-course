@@ -9,7 +9,7 @@
 - Proteomics applications: expression proteomics, PTM proteomics, secretomics, interactomics, single-cell proteomics, organelle proteomics (30 min)
 - Proteomics sample preparation, LC-MS, database search (30 min)
 
-### Session 2 — Nigel
+### Session 2 — Nigel & Atul
 - Plasma proteomics quality control workshop (90 min)
 
 ---
@@ -20,8 +20,8 @@
 2. **Roger** — Large-scale single fibre and data visualization: uMAP, PCA, clustering, plotly (90 min)
 3. **Nigel** — Tissue and disease enrichment case study and genetics integration (90 min)
 4. **Mixed session** (90 min)
+   - Finish tasks from previous session
    - Farina — MOFA findings (15 min)
-   - Nigel — Cross-omic networks (15 min)
    - Roger — IP and transcriptomics integration (60 min)
 
 > Leave 10 min for group discussion and planning for presentation.
