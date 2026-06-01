@@ -115,6 +115,69 @@ def load_hpa_tissue_specificity(path, background=None):
     }
 
 
+# Variant tissue names in HPA nTPM column that should be collapsed to a canonical label.
+HPA_TISSUE_NAME_MAP = {
+    "skin 1": "skin",
+    "skin 2": "skin",
+    "stomach 1": "stomach",
+    "stomach 2": "stomach",
+    "endometrium 1": "endometrium",
+    "endometrium 2": "endometrium",
+    "choroid plexus": "brain",
+}
+
+
+def load_hpa_tissue_enrichment(path, background=None, min_ntpm=1.0,
+                                normalise_names=True):
+    """
+    Build an HPA tissue enrichment annotation from the 'RNA tissue specific nTPM' column.
+
+    This is a protein-level (nTPM-based) tissue mapping, equivalent to the approach
+    used in the R script figure_4_hpa_tissue_enrichment_olink_cleaned.Rmd.
+    Only proteins with tissue-specific nTPM >= min_ntpm in a given tissue are included.
+
+    Parameters
+    ----------
+    min_ntpm : float
+        Minimum normalised TPM to consider a protein expressed in a tissue (default 1.0).
+    normalise_names : bool
+        If True, collapse HPA sub-tissue variants (e.g. 'skin 1' → 'skin') using
+        HPA_TISSUE_NAME_MAP.
+
+    Returns dict {tissue: set_of_uniprot_ids}
+    """
+    df = pd.read_csv(
+        path, sep="\t",
+        usecols=["Gene", "Uniprot", "RNA tissue specific nTPM"],
+    ).dropna(subset=["Uniprot", "RNA tissue specific nTPM"])
+
+    # HPA uses comma-separated UniProt IDs when a row covers multiple isoforms.
+    df = df.copy()
+    df["Uniprot"] = df["Uniprot"].str.split(", ")
+    df = df.explode("Uniprot")
+
+    if background is not None:
+        df = df[df["Uniprot"].isin(background)]
+
+    tissue_proteins: dict[str, set] = {}
+    for _, row in df.iterrows():
+        uniprot = row["Uniprot"]
+        for pair in str(row["RNA tissue specific nTPM"]).split(";"):
+            parts = pair.strip().split(": ", 1)
+            if len(parts) != 2:
+                continue
+            tissue, ntpm_str = parts[0].strip(), parts[1].strip()
+            if normalise_names:
+                tissue = HPA_TISSUE_NAME_MAP.get(tissue, tissue)
+            try:
+                if float(ntpm_str) >= min_ntpm:
+                    tissue_proteins.setdefault(tissue, set()).add(uniprot)
+            except ValueError:
+                continue
+
+    return tissue_proteins
+
+
 def load_ppa(path, p_threshold=0.05, hr_direction="any", min_cases=50,
              background_genes=None):
     """
